@@ -5,6 +5,13 @@ import { supabaseAdmin } from "../supabase";
 
 export const tradesRouter = Router();
 
+/**
+ * POST /trades
+ * body: { marketId: uuid, side: "YES"|"NO", amount: int>0 }
+ * - checks user credits
+ * - inserts into trades
+ * - decrements user credits
+ */
 tradesRouter.post("/", requireAuth, async (req, res) => {
   const schema = z.object({
     marketId: z.string().uuid(),
@@ -27,7 +34,7 @@ tradesRouter.post("/", requireAuth, async (req, res) => {
 
   if (userErr) return res.status(500).json({ error: userErr.message });
 
-  const credits = user.credits ?? 0;
+  const credits = user?.credits ?? 0;
   if (credits < amount) return res.status(400).json({ error: "Insufficient credits" });
 
   // insert trade
@@ -54,5 +61,22 @@ tradesRouter.post("/", requireAuth, async (req, res) => {
 
   if (updErr) return res.status(500).json({ error: updErr.message });
 
-  return res.json({ trade, credits: updated.credits });
+  return res.json({ trade, credits: updated?.credits ?? credits - amount });
+});
+
+/**
+ * GET /trades
+ * returns authenticated user's trades
+ */
+tradesRouter.get("/", requireAuth, async (req, res) => {
+  const userId = (req as any).user.userId as string;
+
+  const { data, error } = await supabaseAdmin
+    .from("trades")
+    .select("id,market_id,side,amount,created_at")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ trades: data ?? [] });
 });
