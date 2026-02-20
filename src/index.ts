@@ -10,6 +10,7 @@ import { tradesRouter } from "./routes/trades";
 import { marketsRouter } from "./routes/markets";
 import { statsRouter } from "./routes/stats";
 import { leaderboardRouter } from "./routes/leaderboard";
+import { referralsRouter } from "./routes/referrals";
 
 const app = express();
 app.set("trust proxy", 1);
@@ -66,6 +67,7 @@ app.use("/trades", tradesRouter);
 app.use("/markets", marketsRouter);
 app.use("/stats", statsRouter);
 app.use("/leaderboard", leaderboardRouter);
+app.use("/referrals", referralsRouter);
 
 /**
  * Error handler
