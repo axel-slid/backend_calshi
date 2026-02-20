@@ -9,9 +9,13 @@ import { tradesRouter } from "./routes/trades";
 
 import { supabaseAdmin } from "./supabase";
 
+
+
 dotenv.config();
 
 const app = express();
+
+console.log("FRONTEND_ORIGIN =", process.env.FRONTEND_ORIGIN);
 
 app.use(
   cors({
@@ -32,7 +36,11 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/debug/supabase", async (_req, res) => {
-  const { data, error } = await supabaseAdmin.from("users").select("id,email").limit(1);
+  const { data, error } = await supabaseAdmin
+    .from("users")
+    .select("id,email,credits")
+    .limit(1);
+
   res.json({ ok: !error, error: error?.message ?? null, data });
 });
 
