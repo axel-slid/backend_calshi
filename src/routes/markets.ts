@@ -3,12 +3,10 @@ import { supabase } from "../supabase";
 
 export const marketsRouter = Router();
 
-// GET /markets
 marketsRouter.get("/", async (_req, res) => {
   const { data, error } = await supabase
     .from("markets")
-    // Safer than select("*") once you start adding columns
-    .select("id, question, status, created_at, volume, yes_price, no_price, rules, ends_at")
+    .select("id, question, status, created_at, yes_price, no_price, rules, ends_at")
     .order("created_at", { ascending: false })
     .limit(50);
 
@@ -19,7 +17,8 @@ marketsRouter.get("/", async (_req, res) => {
     });
   }
 
-  // Normalize fields so the client can rely on them
+  // Always include volume in response so frontend stays happy,
+  // even if markets table doesn't store it
   const markets = (data ?? []).map((m: any) => {
     const yesRaw = m.yes_price;
     const noRaw = m.no_price;
@@ -35,11 +34,12 @@ marketsRouter.get("/", async (_req, res) => {
       question: m.question,
       status: m.status,
       created_at: m.created_at,
-      volume: m.volume ?? 0,
+
+      // volume is not a column → provide default
+      volume: 0,
 
       yes_price: yesPrice,
       no_price: noPrice,
-
       rules: m.rules ?? "",
       ends_at: m.ends_at ?? null,
     };
