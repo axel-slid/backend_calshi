@@ -89,7 +89,7 @@ app.use((err: any, _req: any, res: any, _next: any) => {
   return res.status(500).json({ error: "Internal server error" });
 });
 
-// --- start ---
+
 const port = Number(process.env.PORT || 4000);
 app.listen(port, () => {
   console.log(`Server listening on ${port}`);
