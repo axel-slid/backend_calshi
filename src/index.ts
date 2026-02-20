@@ -10,6 +10,8 @@ import { statsRouter } from "./routes/stats";
 
 const app = express();
 
+app.use("/auth", authRouter);
+
 import cookieParser from "cookie-parser";
 
 app.use(cookieParser());
