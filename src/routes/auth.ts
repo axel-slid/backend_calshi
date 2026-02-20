@@ -83,7 +83,7 @@ authRouter.post("/complete", async (req, res) => {
   } else {
     const { data: created, error: insErr } = await supabase
       .from("users")
-      .insert({ email, username })
+      .insert({ email, username, tokens: 1000 })
       .select("*")
       .single();
 
