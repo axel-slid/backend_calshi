@@ -47,7 +47,13 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-
+app.post("/debug/body", (req, res) => {
+  res.json({
+    contentType: req.headers["content-type"],
+    bodyType: typeof req.body,
+    body: req.body,
+  });
+});
 
 // --- session ---
 app.use(
