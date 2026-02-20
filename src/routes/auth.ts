@@ -175,9 +175,15 @@ authRouter.post("/complete", async (req, res) => {
   }
 });
 
+
+
 authRouter.post("/logout", async (req, res) => {
   req.session.destroy(() => {
     res.clearCookie("calshi.sid");
     res.json({ ok: true });
   });
+});
+
+router.post("/complete", (req, res) => {
+  res.status(200).json({ ok: true });
 });
