@@ -59,6 +59,8 @@ if (!process.env.SESSION_SECRET) {
   console.warn("WARNING: SESSION_SECRET is not set. Sessions will not be secure.");
 }
 
+const isProd = process.env.NODE_ENV === "production";
+
 app.use(
   session({
     name: "calshi.sid",
@@ -67,8 +69,8 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true, // Railway is HTTPS
-      sameSite: "none",
+      secure: isProd,                // <-- change
+      sameSite: isProd ? "none" : "lax", // <-- change
       maxAge: 7 * 24 * 60 * 60 * 1000,
     },
   }),
