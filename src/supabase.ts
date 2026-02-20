@@ -1,48 +1,45 @@
-import { Router } from "express";
-import { supabase } from "../supabase";
+import { createClient } from "@supabase/supabase-js";
 
-export const marketsRouter = Router();
+// Environment variables (set in Railway → Variables)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
-marketsRouter.get("/", async (_req, res) => {
-  const { data, error } = await supabase
-    .from("markets")
-    // NOTE: removed volume
-    .select("id, question, status, created_at, yes_price, no_price, rules, ends_at")
-    .order("created_at", { ascending: false })
-    .limit(50);
+// Hard fail early if misconfigured
+if (!SUPABASE_URL) {
+  throw new Error("Missing SUPABASE_URL environment variable");
+}
 
-  if (error) {
-    return res.status(500).json({
-      error: "Database error",
-      details: error.message,
-    });
+if (!SUPABASE_SERVICE_ROLE_KEY) {
+  throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY environment variable");
+}
+
+/**
+ * Supabase client for normal server operations (reads + limited writes).
+ * Uses anon key if provided, otherwise falls back to service role.
+ */
+export const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY ?? SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
   }
+);
 
-  const markets = (data ?? []).map((m: any) => {
-    const yesRaw = m.yes_price;
-    const noRaw = m.no_price;
-
-    const yesPrice =
-      typeof yesRaw === "number" ? yesRaw : yesRaw != null ? Number(yesRaw) : 0.5;
-
-    const noPrice =
-      typeof noRaw === "number" ? noRaw : noRaw != null ? Number(noRaw) : (1 - yesPrice);
-
-    return {
-      id: m.id,
-      question: m.question,
-      status: m.status,
-      created_at: m.created_at,
-
-      // if you don't have a markets.volume column, provide a default
-      volume: 0,
-
-      yes_price: yesPrice,
-      no_price: noPrice,
-      rules: m.rules ?? "",
-      ends_at: m.ends_at ?? null,
-    };
-  });
-
-  return res.status(200).json({ markets });
-});
+/**
+ * Supabase admin client (FULL DB ACCESS).
+ * Use only when you explicitly need elevated permissions.
+ */
+export const supabaseAdmin = createClient(
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  }
+);
