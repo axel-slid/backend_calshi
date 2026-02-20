@@ -10,6 +10,10 @@ import { statsRouter } from "./routes/stats";
 
 const app = express();
 
+import cookieParser from "cookie-parser";
+
+app.use(cookieParser());
+
 /**
  * Railway runs behind a proxy. Required for secure cookies.
  */
@@ -20,6 +24,7 @@ app.set("trust proxy", 1);
  */
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
 
 /**
  * CORS
