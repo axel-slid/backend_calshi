@@ -184,6 +184,6 @@ authRouter.post("/logout", async (req, res) => {
   });
 });
 
-router.post("/complete", (req, res) => {
+authRouter.post("/complete", async (req, res) => {
   res.status(200).json({ ok: true });
 });
