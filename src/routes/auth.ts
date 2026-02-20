@@ -1,189 +1,152 @@
 import { Router } from "express";
 import { z } from "zod";
 import { OAuth2Client } from "google-auth-library";
-import { supabaseAdmin } from "../supabase";
-import { signSession } from "../session";
 
-export const authRouter = Router();
+import { supabase } from "../supabase"; // adjust if your file exports differently
+
+const authRouter = Router();
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
+if (!googleClientId) {
+  console.warn("WARNING: GOOGLE_CLIENT_ID is not set");
+}
 const oauthClient = new OAuth2Client(googleClientId);
 
-/**
- * POST /auth/google
- * body: { idToken: string }
- * - verify Google
- * - enforce @berkeley.edu
- * - find/create user
- * - set session cookie (calshi.sid)
- */
+const googleSchema = z.object({
+  idToken: z.string().min(20),
+});
+
+const completeSchema = z.object({
+  idToken: z.string().min(20),
+  username: z
+    .string()
+    .min(3, "Username must be at least 3 characters")
+    .max(24, "Username must be <= 24 characters")
+    .regex(/^[a-zA-Z0-9_]+$/, "Username may only contain letters, numbers, underscores"),
+});
+
+// POST /auth/google
+// Verifies token & returns basic info (optional; keep if your frontend uses it)
 authRouter.post("/google", async (req, res) => {
-  const schema = z.object({
-    idToken: z.string().min(20),
-  });
-
-  const parsed = schema.safeParse(req.body);
+  const parsed = googleSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-  if (!googleClientId) return res.status(500).json({ error: "Server misconfigured" });
-
-  const { idToken } = parsed.data;
 
   try {
     const ticket = await oauthClient.verifyIdToken({
-      idToken,
+      idToken: parsed.data.idToken,
       audience: googleClientId,
     });
-
     const payload = ticket.getPayload();
-    if (!payload) return res.status(401).json({ error: "Invalid token" });
+    if (!payload?.email) return res.status(401).json({ error: "Invalid token" });
 
-    const email = (payload.email ?? "").toLowerCase();
-    const emailVerified = payload.email_verified === true;
-
-    if (!emailVerified) return res.status(403).json({ error: "Email not verified by Google" });
-    if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
-
-    // Find existing by email
-    const { data: existingUser, error: findErr } = await supabaseAdmin
-      .from("users")
-      .select("id,email,credits,username,created_at")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (findErr) return res.status(500).json({ error: findErr.message });
-
-    let user = existingUser;
-
-    if (!user) {
-      // Create with initial credits
-      const { data: created, error: createErr } = await supabaseAdmin
-        .from("users")
-        .insert({ email, credits: 1000 })
-        .select("id,email,credits,username,created_at")
-        .single();
-
-      if (createErr) return res.status(500).json({ error: createErr.message });
-      user = created;
-    }
-
-    // ✅ This is the authentication step for the rest of your app:
-    (req as any).session.userId = user.id;
-    (req as any).session.email = user.email;
-
-    // Also return a JWT so the frontend can authenticate even if third‑party cookies are blocked.
-    const sessionToken = signSession({ userId: user.id, email: user.email });
-
-    return res.json({ user, sessionToken });
-  } catch {
+    return res.status(200).json({
+      email: payload.email,
+      email_verified: payload.email_verified ?? false,
+      name: payload.name ?? null,
+      picture: payload.picture ?? null,
+    });
+  } catch (e) {
     return res.status(401).json({ error: "Invalid token" });
   }
 });
 
-/**
- * POST /auth/complete
- * body: { idToken: string, username: string }
- * - verify Google
- * - save username
- * - set session
- */
+// POST /auth/complete
+// Creates/links user in DB and issues a session token (and sets session)
 authRouter.post("/complete", async (req, res) => {
-  const schema = z.object({
-    idToken: z.string().min(20),
-    username: z
-      .string()
-      .trim()
-      .min(3)
-      .max(24)
-      .regex(/^[a-zA-Z0-9_]+$/, "Use only letters, numbers, underscore"),
-  });
-
-  const parsed = schema.safeParse(req.body);
+  const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-  if (!googleClientId) return res.status(500).json({ error: "Server misconfigured" });
 
   const { idToken, username } = parsed.data;
 
+  // Verify Google ID token
+  let email: string | null = null;
+  let emailVerified = false;
+
   try {
     const ticket = await oauthClient.verifyIdToken({
       idToken,
       audience: googleClientId,
     });
-
     const payload = ticket.getPayload();
-    if (!payload) return res.status(401).json({ error: "Invalid token" });
-
-    const email = (payload.email ?? "").toLowerCase();
-    const emailVerified = payload.email_verified === true;
-
-    if (!emailVerified) return res.status(403).json({ error: "Email not verified by Google" });
-    if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
-
-    // Optional uniqueness check
-    const { data: existingName, error: nameErr } = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .ilike("username", username)
-      .maybeSingle();
-
-    if (nameErr) return res.status(500).json({ error: nameErr.message });
-    if (existingName) return res.status(409).json({ error: "Username already taken" });
-
-    // Find user by email
-    const { data: existingUser, error: findErr } = await supabaseAdmin
-      .from("users")
-      .select("id,email,credits,username,created_at")
-      .eq("email", email)
-      .maybeSingle();
-
-    if (findErr) return res.status(500).json({ error: findErr.message });
-
-    let user = existingUser;
-
-    if (!user) {
-      // Create with username + initial credits
-      const { data: created, error: createErr } = await supabaseAdmin
-        .from("users")
-        .insert({ email, credits: 1000, username })
-        .select("id,email,credits,username,created_at")
-        .single();
-
-      if (createErr) return res.status(500).json({ error: createErr.message });
-      user = created;
-    } else {
-      // Update username
-      const { data: updated, error: updErr } = await supabaseAdmin
-        .from("users")
-        .update({ username })
-        .eq("id", user.id)
-        .select("id,email,credits,username,created_at")
-        .single();
-
-      if (updErr) return res.status(500).json({ error: updErr.message });
-      user = updated;
-    }
-
-    // ✅ Set session for subsequent /me, /trades, etc.
-    (req as any).session.userId = user.id;
-    (req as any).session.email = user.email;
-
-    // Also return a JWT so the frontend can authenticate even if third‑party cookies are blocked.
-    const sessionToken = signSession({ userId: user.id, email: user.email });
-
-    return res.json({ user, sessionToken });
+    email = payload?.email ?? null;
+    emailVerified = !!payload?.email_verified;
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
-});
 
+  if (!email) return res.status(401).json({ error: "Invalid token" });
+  if (!emailVerified) return res.status(403).json({ error: "Email not verified" });
 
+  // Berkeley restriction
+  if (!email.toLowerCase().endsWith("@berkeley.edu")) {
+    return res.status(403).json({ error: "Berkeley email required" });
+  }
 
-authRouter.post("/logout", async (req, res) => {
-  req.session.destroy(() => {
-    res.clearCookie("calshi.sid");
-    res.json({ ok: true });
+  // Check username availability
+  const { data: existingUserByUsername, error: usernameErr } = await supabase
+    .from("users")
+    .select("id")
+    .eq("username", username)
+    .maybeSingle();
+
+  if (usernameErr) return res.status(500).json({ error: "Database error" });
+  if (existingUserByUsername) return res.status(409).json({ error: "Username taken" });
+
+  // Upsert user by email
+  const { data: existingByEmail, error: emailErr } = await supabase
+    .from("users")
+    .select("*")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (emailErr) return res.status(500).json({ error: "Database error" });
+
+  let userRow: any;
+
+  if (existingByEmail) {
+    const { data: updated, error: updErr } = await supabase
+      .from("users")
+      .update({ username })
+      .eq("id", existingByEmail.id)
+      .select("*")
+      .single();
+
+    if (updErr) return res.status(500).json({ error: "Database error" });
+    userRow = updated;
+  } else {
+    const { data: created, error: insErr } = await supabase
+      .from("users")
+      .insert({ email, username })
+      .select("*")
+      .single();
+
+    if (insErr) return res.status(500).json({ error: "Database error" });
+    userRow = created;
+  }
+
+  // Issue your app session token (simple random token example)
+  // If you already have JWT code, plug it in here.
+  const sessionToken = `sess_${crypto.randomUUID()}`;
+
+  // Save session token in express-session
+  // @ts-ignore
+  req.session.sessionToken = sessionToken;
+  // @ts-ignore
+  req.session.user = { id: userRow.id, email: userRow.email, username: userRow.username };
+
+  return res.status(200).json({
+    user: { id: userRow.id, email: userRow.email, username: userRow.username },
+    sessionToken,
   });
 });
 
-authRouter.post("/complete", async (req, res) => {
-  res.status(200).json({ ok: true });
+// POST /auth/logout
+authRouter.post("/logout", (req, res) => {
+  // @ts-ignore
+  req.session?.destroy(() => {
+    res.clearCookie("calshi.sid", { sameSite: "none", secure: true });
+    res.status(200).json({ ok: true });
+  });
 });
+
+export default authRouter;
