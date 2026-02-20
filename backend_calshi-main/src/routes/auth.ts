@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { OAuth2Client } from "google-auth-library";
 import { supabaseAdmin } from "../supabase";
-import { signSession } from "../session";
 
 export const authRouter = Router();
 
@@ -70,10 +69,7 @@ authRouter.post("/google", async (req, res) => {
     (req as any).session.userId = user.id;
     (req as any).session.email = user.email;
 
-    // Also return a JWT so the frontend can authenticate even if third‑party cookies are blocked.
-    const sessionToken = signSession({ userId: user.id, email: user.email });
-
-    return res.json({ user, sessionToken });
+    return res.json({ user });
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
@@ -166,10 +162,7 @@ authRouter.post("/complete", async (req, res) => {
     (req as any).session.userId = user.id;
     (req as any).session.email = user.email;
 
-    // Also return a JWT so the frontend can authenticate even if third‑party cookies are blocked.
-    const sessionToken = signSession({ userId: user.id, email: user.email });
-
-    return res.json({ user, sessionToken });
+    return res.json({ user });
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }

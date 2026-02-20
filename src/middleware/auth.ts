@@ -1,16 +1,27 @@
 import { Request, Response, NextFunction } from "express";
 import { verifySession } from "../session";
+import { supabaseAdmin } from "../supabase";
 
 /**
  * requireAuth supports:
  *  1) express-session cookie (preferred for browser)
  *  2) Bearer token (optional, for API testing)
  */
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   // 1) ✅ express-session auth (what your app is actually using)
   const sess: any = (req as any).session;
   if (sess?.userId) {
-    (req as any).user = { userId: sess.userId, email: sess.email };
+    // Validate that the user still exists.
+    const { data, error } = await supabaseAdmin
+      .from("users")
+      .select("id,email")
+      .eq("id", sess.userId)
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(401).json({ error: "Not authenticated" });
+
+    (req as any).user = { userId: data.id, email: data.email };
     return next();
   }
 
@@ -26,7 +37,26 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
   try {
     const claims = verifySession(bearer);
-    (req as any).user = claims;
+    // Validate token claims against users table.
+    const { data, error } = await supabaseAdmin
+      .from("users")
+      .select("id,email")
+      .eq("id", claims.userId)
+      .maybeSingle();
+
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(401).json({ error: "Not authenticated" });
+
+    // Keep behavior consistent with cookie sessions.
+    (req as any).user = { userId: data.id, email: data.email };
+    // Best-effort: populate server session too (helps if cookies start working later).
+    try {
+      const s: any = (req as any).session;
+      if (s) {
+        s.userId = data.id;
+        s.email = data.email;
+      }
+    } catch {}
     return next();
   } catch {
     return res.status(401).json({ error: "Invalid session" });
