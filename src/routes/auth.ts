@@ -187,3 +187,5 @@ authRouter.post("/logout", async (req, res) => {
 authRouter.post("/complete", async (req, res) => {
   res.status(200).json({ ok: true });
 });
+
+export default authRouter;
