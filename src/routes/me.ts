@@ -1,11 +1,18 @@
 import { Router } from "express";
+import { requireAuth } from "../middleware/auth";
+import { supabaseAdmin } from "../supabase";
 
 export const meRouter = Router();
 
-meRouter.get("/", (req, res) => {
-  // @ts-ignore
-  const user = req.session?.user ?? null;
-  // @ts-ignore
-  const sessionToken = req.session?.sessionToken ?? null;
-  res.status(200).json({ user, sessionToken });
+meRouter.get("/", requireAuth, async (req, res) => {
+  const userId = (req as any).user.userId as string;
+
+  const { data: user, error } = await supabaseAdmin
+    .from("users")
+    .select("id,email,username,credits,created_at")
+    .eq("id", userId)
+    .single();
+
+  if (error) return res.status(500).json({ error: error.message });
+  return res.json({ user });
 });

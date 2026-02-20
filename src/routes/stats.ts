@@ -5,9 +5,8 @@ export const statsRouter = Router();
 
 /**
  * GET /stats
- * Uses trades table:
  * - activeTokensStaked: sum(amount)
- * - dailyForecasters: distinct user_id who traded in last 24h
+ * - dailyForecasters: distinct user_id with trade in last 24h
  */
 statsRouter.get("/", async (_req, res) => {
   const { data: trades, error } = await supabaseAdmin
@@ -31,8 +30,5 @@ statsRouter.get("/", async (_req, res) => {
     }
   }
 
-  return res.json({
-    activeTokensStaked,
-    dailyForecasters: dailyUsers.size,
-  });
+  return res.json({ activeTokensStaked, dailyForecasters: dailyUsers.size });
 });

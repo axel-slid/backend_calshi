@@ -3,9 +3,8 @@ import { z } from "zod";
 import { OAuth2Client } from "google-auth-library";
 import { supabaseAdmin } from "../supabase";
 import { signSession } from "../session";
-import { upsertUserAndMaybeGrantSignupBonus } from "../db/users";
 
-const authRouter = Router();
+export const authRouter = Router();
 
 const googleClientId = process.env.GOOGLE_CLIENT_ID;
 const oauthClient = new OAuth2Client(googleClientId);
@@ -20,6 +19,107 @@ const completeSchema = z.object({
     .regex(/^[a-zA-Z0-9_]+$/, "Use only letters, numbers, underscore"),
 });
 
+const googleSchema = z.object({
+  idToken: z.string().min(20),
+});
+
+/**
+ * Internal helper:
+ * - ensures user exists
+ * - ensures they have at least 1000 credits on first signup (and fixes old 0-credit users)
+ * - sets username if provided
+ */
+async function ensureUser(email: string, username?: string) {
+  // Find existing
+  const found = await supabaseAdmin
+    .from("users")
+    .select("id,email,credits,username,created_at")
+    .eq("email", email)
+    .maybeSingle();
+
+  if (found.error) throw found.error;
+
+  // Create if missing
+  if (!found.data) {
+    const created = await supabaseAdmin
+      .from("users")
+      .insert({ email, credits: 1000, ...(username ? { username } : {}) })
+      .select("id,email,credits,username,created_at")
+      .single();
+
+    if (created.error) throw created.error;
+    return created.data;
+  }
+
+  // Existing user: if credits missing/0, fix to 1000 (this handles users created earlier with 0)
+  const currentCredits = Number(found.data.credits ?? 0);
+  const needsCreditFix = currentCredits < 1000;
+
+  if (needsCreditFix || (username && found.data.username !== username)) {
+    const updated = await supabaseAdmin
+      .from("users")
+      .update({
+        ...(needsCreditFix ? { credits: 1000 } : {}),
+        ...(username ? { username } : {}),
+      })
+      .eq("id", found.data.id)
+      .select("id,email,credits,username,created_at")
+      .single();
+
+    if (updated.error) throw updated.error;
+    return updated.data;
+  }
+
+  return found.data;
+}
+
+/**
+ * POST /auth/google
+ * body: { idToken }
+ * Returns user + sessionToken
+ */
+authRouter.post("/google", async (req, res) => {
+  const parsed = googleSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+  if (!googleClientId) return res.status(500).json({ error: "Server misconfigured" });
+
+  const { idToken } = parsed.data;
+
+  try {
+    const ticket = await oauthClient.verifyIdToken({ idToken, audience: googleClientId });
+    const payload = ticket.getPayload();
+    if (!payload) return res.status(401).json({ error: "Invalid token" });
+
+    const email = (payload.email ?? "").toLowerCase();
+    const emailVerified = payload.email_verified === true;
+
+    if (!emailVerified) return res.status(403).json({ error: "Email not verified by Google" });
+    if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
+
+    const user = await ensureUser(email);
+
+    const sessionToken = signSession({ userId: user.id, email: user.email });
+
+    // cookie optional; frontend primarily uses Authorization header
+    res.cookie("session", sessionToken, {
+      httpOnly: true,
+      sameSite: "none",
+      secure: true,
+      path: "/",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    return res.json({ user, sessionToken });
+  } catch {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+});
+
+/**
+ * POST /auth/complete
+ * body: { idToken, username }
+ * Returns user + sessionToken
+ */
 authRouter.post("/complete", async (req, res) => {
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Bad request" });
@@ -38,33 +138,20 @@ authRouter.post("/complete", async (req, res) => {
     if (!emailVerified) return res.status(403).json({ error: "Email not verified by Google" });
     if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
 
-    // Username uniqueness check
-    const { data: existingName, error: nameErr } = await supabaseAdmin
+    // username uniqueness
+    const nameCheck = await supabaseAdmin
       .from("users")
       .select("id")
       .ilike("username", username)
       .maybeSingle();
 
-    if (nameErr) return res.status(500).json({ error: nameErr.message });
-    if (existingName) return res.status(409).json({ error: "Username already taken" });
+    if (nameCheck.error) return res.status(500).json({ error: nameCheck.error.message });
+    if (nameCheck.data) return res.status(409).json({ error: "Username already taken" });
 
-    // ✅ Upsert user and grant signup bonus ONCE (credits += 1000)
-    const userWithCredits = await upsertUserAndMaybeGrantSignupBonus(email);
+    const user = await ensureUser(email, username);
 
-    // ✅ Ensure username set
-    const { data: updated, error: updErr } = await supabaseAdmin
-      .from("users")
-      .update({ username })
-      .eq("id", userWithCredits.id)
-      .select("id,email,username,credits,created_at")
-      .single();
+    const sessionToken = signSession({ userId: user.id, email: user.email });
 
-    if (updErr) return res.status(500).json({ error: updErr.message });
-
-    // ✅ JWT session token for frontend (works even if cookies blocked)
-    const sessionToken = signSession({ userId: updated.id, email: updated.email });
-
-    // Optional cookie for setups that want it (middleware supports it)
     res.cookie("session", sessionToken, {
       httpOnly: true,
       sameSite: "none",
@@ -73,15 +160,19 @@ authRouter.post("/complete", async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.json({ user: updated, sessionToken });
+    return res.json({ user, sessionToken });
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
 });
 
+/**
+ * POST /auth/logout
+ * Clears cookie. Frontend should also clear localStorage token.
+ */
 authRouter.post("/logout", async (_req, res) => {
   res.clearCookie("session", { path: "/", sameSite: "none", secure: true });
-  res.json({ ok: true });
+  return res.json({ ok: true });
 });
 
 export default authRouter;

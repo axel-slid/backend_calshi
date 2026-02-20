@@ -5,7 +5,7 @@ export const leaderboardRouter = Router();
 
 /**
  * GET /leaderboard
- * Returns top users by credits.
+ * Top users by credits.
  */
 leaderboardRouter.get("/", async (_req, res) => {
   const { data, error } = await supabaseAdmin
@@ -19,8 +19,8 @@ leaderboardRouter.get("/", async (_req, res) => {
 
   return res.json({
     leaders: (data ?? []).map((u: any) => ({
-      username: u.username,
-      credits: Number(u.credits ?? 0),
+      name: String(u.username),
+      tokens: Number(u.credits ?? 0),
     })),
   });
 });

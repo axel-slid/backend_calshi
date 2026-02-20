@@ -5,28 +5,32 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 
 import authRouter from "./routes/auth";
-import { marketsRouter } from "./routes/markets";
 import { meRouter } from "./routes/me";
-import { statsRouter } from "./routes/stats";
 import { tradesRouter } from "./routes/trades";
+import { marketsRouter } from "./routes/markets";
+import { statsRouter } from "./routes/stats";
 import { leaderboardRouter } from "./routes/leaderboard";
 
 const app = express();
 app.set("trust proxy", 1);
 
-// ---- CORS ----
-const allowedOrigins = [
+/**
+ * CORS (must not use "*" with credentials)
+ */
+const ALLOWED_ORIGINS = new Set<string>([
+  "http://localhost:5173",
+  "http://localhost:3000",
+  "https://frontendcalshi.vercel.app",
   "https://www.calshi.app",
   "https://calshi.app",
-  "http://localhost:5173",
-];
+]);
 
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked: ${origin}`));
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (ALLOWED_ORIGINS.has(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
@@ -34,35 +38,44 @@ app.use(
   })
 );
 
-// NOTE: Express 5 crashes on app.options("*", ...). Don't add it.
+// DO NOT do app.options("*", ...) on Express 5 (it can crash with path-to-regexp)
 
-// ---- Parsers ----
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ---- Canary/debug ----
-app.get("/__ping", (_req, res) => res.status(200).send("pong-v1"));
+/**
+ * Debug/canary
+ */
+app.get("/__ping", (_req, res) => res.status(200).send("pong"));
 app.post("/debug/body", (req, res) =>
   res.status(200).json({ contentType: req.headers["content-type"], body: req.body })
 );
 
-// ---- Health ----
-app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+/**
+ * Health
+ */
+app.get("/health", (_req, res) => res.json({ ok: true }));
 
-// ---- Routes ----
+/**
+ * Routes
+ */
 app.use("/auth", authRouter);
-app.use("/markets", marketsRouter);
 app.use("/me", meRouter);
-app.use("/stats", statsRouter);
 app.use("/trades", tradesRouter);
+app.use("/markets", marketsRouter);
+app.use("/stats", statsRouter);
 app.use("/leaderboard", leaderboardRouter);
 
-// ---- Error handler ----
+/**
+ * Error handler
+ */
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error(err);
   res.status(500).json({ error: err?.message || "Internal server error" });
 });
 
-const port = Number(process.env.PORT || 4000);
-app.listen(port, () => console.log(`Server listening on ${port}`));
+const port = Number(process.env.PORT || 8080);
+app.listen(port, () => {
+  console.log(`API listening on :${port}`);
+});
