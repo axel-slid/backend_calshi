@@ -1,64 +1,50 @@
-import { Request, Response, NextFunction } from "express";
-import { verifySession } from "../session";
-import { supabaseAdmin } from "../supabase";
+import jwt from "jsonwebtoken";
+import { db } from "../db";
 
-/**
- * requireAuth supports:
- *  1) express-session cookie (preferred for browser)
- *  2) Bearer token (optional, for API testing)
- */
-export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  // 1) ✅ express-session auth (what your app is actually using)
-  const sess: any = (req as any).session;
-  if (sess?.userId) {
-    // Validate that the user still exists.
-    const { data, error } = await supabaseAdmin
-      .from("users")
-      .select("id,email")
-      .eq("id", sess.userId)
-      .maybeSingle();
+export async function requireAuth(req: any, res: any, next: any) {
+  let token: string | undefined;
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(401).json({ error: "Not authenticated" });
-
-    (req as any).user = { userId: data.id, email: data.email };
-    return next();
+  // 1️⃣ Check Authorization header (Bearer token)
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith("Bearer ")) {
+    token = authHeader.slice(7);
   }
 
-  // 2) Optional fallback: Bearer token
-  const bearer =
-    req.headers.authorization?.startsWith("Bearer ")
-      ? req.headers.authorization.slice("Bearer ".length)
-      : null;
+  // 2️⃣ Fallback: check session cookie
+  if (!token && req.cookies?.session) {
+    token = req.cookies.session;
+  }
 
-  if (!bearer) {
+  if (!token) {
     return res.status(401).json({ error: "Not authenticated" });
   }
 
   try {
-    const claims = verifySession(bearer);
-    // Validate token claims against users table.
-    const { data, error } = await supabaseAdmin
-      .from("users")
-      .select("id,email")
-      .eq("id", claims.userId)
-      .maybeSingle();
+    const payload: any = jwt.verify(
+      token,
+      process.env.APP_JWT_SECRET || process.env.SESSION_SECRET!
+    );
 
-    if (error) return res.status(500).json({ error: error.message });
-    if (!data) return res.status(401).json({ error: "Not authenticated" });
+    const userId = payload.userId;
+    if (!userId) throw new Error("Missing userId");
 
-    // Keep behavior consistent with cookie sessions.
-    (req as any).user = { userId: data.id, email: data.email };
-    // Best-effort: populate server session too (helps if cookies start working later).
-    try {
-      const s: any = (req as any).session;
-      if (s) {
-        s.userId = data.id;
-        s.email = data.email;
-      }
-    } catch {}
-    return next();
-  } catch {
+    // 3️⃣ Verify user exists
+    const user = await db
+      .selectFrom("users")
+      .select(["id", "email"])
+      .where("id", "=", userId)
+      .executeTakeFirst();
+
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    // 4️⃣ Attach user to request
+    req.user = user;
+    req.userId = userId;
+
+    next();
+  } catch (err) {
     return res.status(401).json({ error: "Invalid session" });
   }
 }
