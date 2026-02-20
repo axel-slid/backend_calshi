@@ -97,6 +97,11 @@ app.use("/stats", statsRouter);
  * Start server
  */
 const port = process.env.PORT || 8080;
+
+app.post("/auth/complete", (_req, res) => {
+  res.status(200).json({ ok: true });
+});
+
 app.listen(port, () => {
   console.log(`API listening on :${port}`);
 });
