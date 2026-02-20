@@ -10,29 +10,7 @@ import { statsRouter } from "./routes/stats";
 
 const app = express();
 
-app.use("/auth", authRouter);
 
-import cookieParser from "cookie-parser";
-
-app.use(cookieParser());
-
-/**
- * Railway runs behind a proxy. Required for secure cookies.
- */
-app.set("trust proxy", 1);
-
-/**
- * Body parsing
- */
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
-
-/**
- * CORS
- * Must list the exact origins that will call the API.
- * Do NOT use "*" with credentials.
- */
 const ALLOWED_ORIGINS = new Set<string>([
   "http://localhost:5173",
   "http://localhost:3000",
@@ -57,6 +35,32 @@ app.use(
     credentials: true,
   }),
 );
+
+
+app.use("/auth", authRouter);
+
+import cookieParser from "cookie-parser";
+
+app.use(cookieParser());
+
+/**
+ * Railway runs behind a proxy. Required for secure cookies.
+ */
+app.set("trust proxy", 1);
+
+/**
+ * Body parsing
+ */
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
+/**
+ * CORS
+ * Must list the exact origins that will call the API.
+ * Do NOT use "*" with credentials.
+ */
+
 
 /**
  * Sessions
