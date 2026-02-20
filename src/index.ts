@@ -34,6 +34,7 @@ const ALLOWED_ORIGINS = new Set<string>([
   "https://frontendcalshi.vercel.app",
   "https://frontendcalshi-nki17b6rr-dils-6980s-projects.vercel.app",
   "https://www.calshi.app",
+  "https://calshi.app"
 ]);
 
 app.use(
