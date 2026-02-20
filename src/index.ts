@@ -3,21 +3,23 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import session from "express-session";
 
 import authRouter from "./routes/auth";
 import { marketsRouter } from "./routes/markets";
 import { meRouter } from "./routes/me";
-
-// If these exist in your repo, keep them; otherwise remove these two lines
-import { tradesRouter } from "./routes/trades";
 import { statsRouter } from "./routes/stats";
+import { tradesRouter } from "./routes/trades";
+import { leaderboardRouter } from "./routes/leaderboard";
 
 const app = express();
 app.set("trust proxy", 1);
 
-// ---- CORS first ----
-const allowedOrigins = ["https://www.calshi.app", "https://calshi.app", "http://localhost:5173"];
+// ---- CORS ----
+const allowedOrigins = [
+  "https://www.calshi.app",
+  "https://calshi.app",
+  "http://localhost:5173",
+];
 
 app.use(
   cors({
@@ -32,48 +34,29 @@ app.use(
   })
 );
 
+// NOTE: Express 5 crashes on app.options("*", ...). Don't add it.
 
-// ---- Parsers before routers ----
+// ---- Parsers ----
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ---- Canary/debug endpoints (for deployment + body parsing) ----
+// ---- Canary/debug ----
 app.get("/__ping", (_req, res) => res.status(200).send("pong-v1"));
-app.post("/debug/body", (req, res) => {
-  res.status(200).json({
-    contentType: req.headers["content-type"],
-    body: req.body,
-  });
-});
-
-// ---- Session ----
-app.use(
-  session({
-    name: "calshi.sid",
-    secret: process.env.SESSION_SECRET || "dev-secret",
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "none",
-      secure: true,
-      maxAge: 1000 * 60 * 60 * 24 * 30,
-    },
-  })
+app.post("/debug/body", (req, res) =>
+  res.status(200).json({ contentType: req.headers["content-type"], body: req.body })
 );
 
 // ---- Health ----
 app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
 
-// ---- Routers ----
+// ---- Routes ----
 app.use("/auth", authRouter);
 app.use("/markets", marketsRouter);
 app.use("/me", meRouter);
-
-// If these routers exist in your repo, keep; if not, delete them
-app.use("/trades", tradesRouter);
 app.use("/stats", statsRouter);
+app.use("/trades", tradesRouter);
+app.use("/leaderboard", leaderboardRouter);
 
 // ---- Error handler ----
 app.use((err: any, _req: any, res: any, _next: any) => {
@@ -82,6 +65,4 @@ app.use((err: any, _req: any, res: any, _next: any) => {
 });
 
 const port = Number(process.env.PORT || 4000);
-app.listen(port, () => {
-  console.log(`Server listening on ${port}`);
-});
+app.listen(port, () => console.log(`Server listening on ${port}`));
