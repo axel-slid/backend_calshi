@@ -1,60 +1,28 @@
 import { Router } from "express";
 import { z } from "zod";
 import { OAuth2Client } from "google-auth-library";
+import { supabase } from "../supabase";
 
-import { supabase } from "../supabase"; // adjust if your file exports differently
+export const authRouter = Router();
 
-const authRouter = Router();
-
-const googleClientId = process.env.GOOGLE_CLIENT_ID;
-if (!googleClientId) {
-  console.warn("WARNING: GOOGLE_CLIENT_ID is not set");
-}
+const googleClientId = process.env.GOOGLE_CLIENT_ID || "";
 const oauthClient = new OAuth2Client(googleClientId);
-
-const googleSchema = z.object({
-  idToken: z.string().min(20),
-});
 
 const completeSchema = z.object({
   idToken: z.string().min(20),
   username: z
     .string()
-    .min(3, "Username must be at least 3 characters")
-    .max(24, "Username must be <= 24 characters")
-    .regex(/^[a-zA-Z0-9_]+$/, "Username may only contain letters, numbers, underscores"),
-});
-
-// POST /auth/google
-// Verifies token & returns basic info (optional; keep if your frontend uses it)
-authRouter.post("/google", async (req, res) => {
-  const parsed = googleSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Bad request" });
-
-  try {
-    const ticket = await oauthClient.verifyIdToken({
-      idToken: parsed.data.idToken,
-      audience: googleClientId,
-    });
-    const payload = ticket.getPayload();
-    if (!payload?.email) return res.status(401).json({ error: "Invalid token" });
-
-    return res.status(200).json({
-      email: payload.email,
-      email_verified: payload.email_verified ?? false,
-      name: payload.name ?? null,
-      picture: payload.picture ?? null,
-    });
-  } catch (e) {
-    return res.status(401).json({ error: "Invalid token" });
-  }
+    .min(3)
+    .max(24)
+    .regex(/^[a-zA-Z0-9_]+$/),
 });
 
 // POST /auth/complete
-// Creates/links user in DB and issues a session token (and sets session)
 authRouter.post("/complete", async (req, res) => {
   const parsed = completeSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "Bad request" });
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Bad request" });
+  }
 
   const { idToken, username } = parsed.data;
 
@@ -65,7 +33,7 @@ authRouter.post("/complete", async (req, res) => {
   try {
     const ticket = await oauthClient.verifyIdToken({
       idToken,
-      audience: googleClientId,
+      audience: googleClientId || undefined,
     });
     const payload = ticket.getPayload();
     email = payload?.email ?? null;
@@ -77,41 +45,40 @@ authRouter.post("/complete", async (req, res) => {
   if (!email) return res.status(401).json({ error: "Invalid token" });
   if (!emailVerified) return res.status(403).json({ error: "Email not verified" });
 
-  // Berkeley restriction
   if (!email.toLowerCase().endsWith("@berkeley.edu")) {
     return res.status(403).json({ error: "Berkeley email required" });
   }
 
-  // Check username availability
-  const { data: existingUserByUsername, error: usernameErr } = await supabase
+  // Username taken?
+  const { data: byUsername, error: usernameErr } = await supabase
     .from("users")
     .select("id")
     .eq("username", username)
     .maybeSingle();
 
-  if (usernameErr) return res.status(500).json({ error: "Database error" });
-  if (existingUserByUsername) return res.status(409).json({ error: "Username taken" });
+  if (usernameErr) return res.status(500).json({ error: "Database error", details: usernameErr.message });
+  if (byUsername) return res.status(409).json({ error: "Username taken" });
 
-  // Upsert user by email
-  const { data: existingByEmail, error: emailErr } = await supabase
+  // Upsert by email
+  const { data: byEmail, error: emailErr } = await supabase
     .from("users")
     .select("*")
     .eq("email", email)
     .maybeSingle();
 
-  if (emailErr) return res.status(500).json({ error: "Database error" });
+  if (emailErr) return res.status(500).json({ error: "Database error", details: emailErr.message });
 
   let userRow: any;
 
-  if (existingByEmail) {
+  if (byEmail) {
     const { data: updated, error: updErr } = await supabase
       .from("users")
       .update({ username })
-      .eq("id", existingByEmail.id)
+      .eq("id", byEmail.id)
       .select("*")
       .single();
 
-    if (updErr) return res.status(500).json({ error: "Database error" });
+    if (updErr) return res.status(500).json({ error: "Database error", details: updErr.message });
     userRow = updated;
   } else {
     const { data: created, error: insErr } = await supabase
@@ -120,15 +87,12 @@ authRouter.post("/complete", async (req, res) => {
       .select("*")
       .single();
 
-    if (insErr) return res.status(500).json({ error: "Database error" });
+    if (insErr) return res.status(500).json({ error: "Database error", details: insErr.message });
     userRow = created;
   }
 
-  // Issue your app session token (simple random token example)
-  // If you already have JWT code, plug it in here.
   const sessionToken = `sess_${crypto.randomUUID()}`;
 
-  // Save session token in express-session
   // @ts-ignore
   req.session.sessionToken = sessionToken;
   // @ts-ignore

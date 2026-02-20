@@ -31,7 +31,7 @@ app.use(
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-app.options("*", cors());
+
 
 // ---- Parsers before routers ----
 app.use(cookieParser());
