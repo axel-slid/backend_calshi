@@ -11,6 +11,9 @@ import meRouter from "./routes/me";           // adjust if your paths differ
 
 const app = express();
 
+app.get("/__ping", (_req, res) => res.status(200).send("pong-v1"));
+app.post("/__ping", (_req, res) => res.status(200).json({ ok: true }));
+
 // --- trust proxy (Railway) ---
 app.set("trust proxy", 1);
 
