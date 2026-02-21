@@ -30,45 +30,60 @@ const googleSchema = z.object({
  * - ensures they have at least 1000 credits on first signup (and fixes old 0-credit users)
  * - sets username if provided
  */
+
+
+/**
+ * Internal helper:
+ * - ensures user exists
+ * - grants 1000 credits ONLY once (on first creation)
+ * - increments login_count every login
+ * - sets username if provided
+ */
 async function ensureUser(email: string, username?: string) {
   const found = await supabaseAdmin
     .from("users")
-    .select("id,email,credits,username,created_at")
+    .select("id,email,credits,username,created_at,login_count,signup_bonus_granted")
     .eq("email", email)
     .maybeSingle();
 
   if (found.error) throw found.error;
 
+  // FIRST LOGIN (user doesn't exist yet)
   if (!found.data) {
     const created = await supabaseAdmin
       .from("users")
-      .insert({ email, credits: 1000, ...(username ? { username } : {}) })
-      .select("id,email,credits,username,created_at")
+      .insert({
+        email,
+        credits: 1000,
+        signup_bonus_granted: true,
+        login_count: 1,
+        ...(username ? { username } : {}),
+      })
+      .select("id,email,credits,username,created_at,login_count,signup_bonus_granted")
       .single();
 
     if (created.error) throw created.error;
     return created.data;
   }
 
-  const currentCredits = Number(found.data.credits ?? 0);
-  const needsCreditFix = currentCredits < 1000;
+  // EXISTING USER: increment login_count, optionally set username
+  const currentLoginCount = Number(found.data.login_count ?? 0);
+  const updates: any = { login_count: currentLoginCount + 1 };
 
-  if (needsCreditFix || (username && found.data.username !== username)) {
-    const updated = await supabaseAdmin
-      .from("users")
-      .update({
-        ...(needsCreditFix ? { credits: 1000 } : {}),
-        ...(username ? { username } : {}),
-      })
-      .eq("id", found.data.id)
-      .select("id,email,credits,username,created_at")
-      .single();
-
-    if (updated.error) throw updated.error;
-    return updated.data;
+  if (username && found.data.username !== username) {
+    updates.username = username;
   }
 
-  return found.data;
+  // IMPORTANT: do NOT touch credits here.
+  const updated = await supabaseAdmin
+    .from("users")
+    .update(updates)
+    .eq("id", found.data.id)
+    .select("id,email,credits,username,created_at,login_count,signup_bonus_granted")
+    .single();
+
+  if (updated.error) throw updated.error;
+  return updated.data;
 }
 
 /**
