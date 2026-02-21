@@ -1,16 +1,21 @@
 import { Router } from "express";
 import crypto from "crypto";
 import { supabaseAdmin } from "../supabase";
+import { requireAuth } from "../middleware/auth";
 
 export const referralsRouter = Router();
+
+// All referral endpoints require auth.
+referralsRouter.use(requireAuth);
 
 function generateCode() {
   return `CAL-${crypto.randomBytes(4).toString("hex").toUpperCase()}`; // CAL-8CHARS
 }
 
-// GET /referrals/code -> returns an invite code for the current user (create if missing)
+// GET /referrals/code
+// Returns an invite code for the current user (create if missing)
 referralsRouter.get("/code", async (req: any, res) => {
-  const userId = req.user?.id;
+  const userId = req.user?.userId ?? req.user?.id;
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
   const { data: existing, error: selErr } = await supabaseAdmin
@@ -24,11 +29,14 @@ referralsRouter.get("/code", async (req: any, res) => {
   if (selErr) return res.status(500).json({ error: "Database error", details: selErr.message });
   if (existing?.code) return res.json({ code: existing.code });
 
+  // Try a few times in case of code collision
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateCode();
-    const { error: insErr } = await supabaseAdmin
-      .from("referral_codes")
-      .insert({ code, referrer_user_id: userId });
+
+    const { error: insErr } = await supabaseAdmin.from("referral_codes").insert({
+      code,
+      referrer_user_id: userId,
+    });
 
     if (!insErr) return res.json({ code });
   }
@@ -36,9 +44,11 @@ referralsRouter.get("/code", async (req: any, res) => {
   return res.status(500).json({ error: "Could not generate invite code" });
 });
 
-// POST /referrals/redeem { code } -> redeem once, referrer earns up to 10 times (enforced by SQL)
+// POST /referrals/redeem
+// body: { code }
+// Redeem once per user; referrer earns up to 10 times (enforced by SQL/RPC)
 referralsRouter.post("/redeem", async (req: any, res) => {
-  const userId = req.user?.id;
+  const userId = req.user?.userId ?? req.user?.id;
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
   const code = (req.body?.code ?? "").toString().trim().toUpperCase();

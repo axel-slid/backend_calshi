@@ -17,6 +17,7 @@ const completeSchema = z.object({
     .min(3)
     .max(24)
     .regex(/^[a-zA-Z0-9_]+$/, "Use only letters, numbers, underscore"),
+  referralCode: z.string().trim().optional(),
 });
 
 const googleSchema = z.object({
@@ -30,7 +31,6 @@ const googleSchema = z.object({
  * - sets username if provided
  */
 async function ensureUser(email: string, username?: string) {
-  // Find existing
   const found = await supabaseAdmin
     .from("users")
     .select("id,email,credits,username,created_at")
@@ -39,7 +39,6 @@ async function ensureUser(email: string, username?: string) {
 
   if (found.error) throw found.error;
 
-  // Create if missing
   if (!found.data) {
     const created = await supabaseAdmin
       .from("users")
@@ -51,7 +50,6 @@ async function ensureUser(email: string, username?: string) {
     return created.data;
   }
 
-  // Existing user: if credits missing/0, fix to 1000 (this handles users created earlier with 0)
   const currentCredits = Number(found.data.credits ?? 0);
   const needsCreditFix = currentCredits < 1000;
 
@@ -97,10 +95,8 @@ authRouter.post("/google", async (req, res) => {
     if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
 
     const user = await ensureUser(email);
-
     const sessionToken = signSession({ userId: user.id, email: user.email });
 
-    // cookie optional; frontend primarily uses Authorization header
     res.cookie("session", sessionToken, {
       httpOnly: true,
       sameSite: "none",
@@ -117,15 +113,15 @@ authRouter.post("/google", async (req, res) => {
 
 /**
  * POST /auth/complete
- * body: { idToken, username }
- * Returns user + sessionToken
+ * body: { idToken, username, referralCode? }
+ * Returns user + sessionToken (+ referral result if provided)
  */
 authRouter.post("/complete", async (req, res) => {
   const parsed = completeSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Bad request" });
   if (!googleClientId) return res.status(500).json({ error: "Server misconfigured" });
 
-  const { idToken, username } = parsed.data;
+  const { idToken, username, referralCode } = parsed.data;
 
   try {
     const ticket = await oauthClient.verifyIdToken({ idToken, audience: googleClientId });
@@ -139,16 +135,25 @@ authRouter.post("/complete", async (req, res) => {
     if (!email.endsWith("@berkeley.edu")) return res.status(403).json({ error: "Must use @berkeley.edu" });
 
     // username uniqueness
-    const nameCheck = await supabaseAdmin
-      .from("users")
-      .select("id")
-      .ilike("username", username)
-      .maybeSingle();
-
+    const nameCheck = await supabaseAdmin.from("users").select("id").ilike("username", username).maybeSingle();
     if (nameCheck.error) return res.status(500).json({ error: nameCheck.error.message });
     if (nameCheck.data) return res.status(409).json({ error: "Username already taken" });
 
     const user = await ensureUser(email, username);
+
+    // Best-effort referral redeem (does not block signup)
+    let referral: any = undefined;
+    const code = (referralCode ?? "").toString().trim().toUpperCase();
+    if (code) {
+      const { data, error } = await supabaseAdmin.rpc("redeem_referral_code", {
+        p_code: code,
+        p_redeemer: user.id,
+      });
+
+      if (error) referral = { ok: false, error: error.message };
+      else if (!data?.ok) referral = { ok: false, error: data?.error ?? "Could not redeem" };
+      else referral = { ok: true, new_success_count: data?.new_success_count };
+    }
 
     const sessionToken = signSession({ userId: user.id, email: user.email });
 
@@ -160,7 +165,7 @@ authRouter.post("/complete", async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return res.json({ user, sessionToken });
+    return res.json({ user, sessionToken, referral });
   } catch {
     return res.status(401).json({ error: "Invalid token" });
   }
@@ -168,7 +173,6 @@ authRouter.post("/complete", async (req, res) => {
 
 /**
  * POST /auth/logout
- * Clears cookie. Frontend should also clear localStorage token.
  */
 authRouter.post("/logout", async (_req, res) => {
   res.clearCookie("session", { path: "/", sameSite: "none", secure: true });
